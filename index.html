@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Дашборд текучести + GigaChat</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg:#0f172a; --card:#1e293b; --card2:#243449;
+    --text:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8;
+    --red:#ef4444; --green:#22c55e; --amber:#f59e0b; --border:#334155;
+    --purple:#a855f7; --orange:#fb923c; --teal:#14b8a6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',system-ui,sans-serif}
+  body{background:var(--bg);color:var(--text);padding:24px}
+  h1{font-size:22px;margin-bottom:4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .status{display:inline-block;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600}
+  .status.on{background:rgba(34,197,94,.15);color:#86efac}
+  .status.off{background:rgba(239,68,68,.15);color:#fca5a5}
+  .status.wait{background:rgba(245,158,11,.15);color:#fcd34d}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px}
+  select,input{background:var(--card);color:var(--text);border:1px solid var(--border);
+    padding:9px 12px;border-radius:8px;font-size:14px}
+  select{cursor:pointer;min-width:200px}
+  input[type=date],input[type=number]{min-width:120px}
+  button{background:var(--accent);color:#0f172a;border:none;padding:10px 16px;
+    border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:.15s}
+  button:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--border)}
+  button.danger{background:var(--red);color:#fff}
+  button.small{padding:6px 10px;font-size:12px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px}
+  .kpi{background:var(--card);padding:16px;border-radius:12px;border-left:4px solid var(--accent)}
+  .kpi.red{border-color:var(--red)} .kpi.green{border-color:var(--green)} .kpi.amber{border-color:var(--amber)}
+  .kpi.purple{border-color:var(--purple)} .kpi.orange{border-color:var(--orange)}
+  .kpi .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .kpi .value{font-size:26px;font-weight:700;margin-top:6px}
+  .kpi .delta{font-size:12px;color:var(--muted);margin-top:4px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border-radius:12px;padding:18px}
+  .card h3{font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px}
+  .card.full{grid-column:1/-1}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase}
+  tr:hover td{background:var(--card2)}
+  .badge{padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;display:inline-block}
+  .b-red{background:rgba(239,68,68,.15);color:#fca5a5}
+  .b-green{background:rgba(34,197,94,.15);color:#86efac}
+  .b-amber{background:rgba(245,158,11,.15);color:#fcd34d}
+  .b-blue{background:rgba(56,189,248,.15);color:#7dd3fc}
+  .b-gray{background:rgba(148,163,184,.15);color:#cbd5e1}
+  .b-purple{background:rgba(168,85,247,.15);color:#d8b4fe}
+  .b-orange{background:rgba(251,146,60,.15);color:#fdba74}
+  .b-teal{background:rgba(20,184,166,.15);color:#5eead4}
+  canvas{max-height:300px}
+  .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;
+    align-items:center;justify-content:center;padding:20px}
+  .modal-bg.open{display:flex}
+  .modal{background:var(--card);border-radius:14px;padding:24px;max-width:680px;width:100%;
+    max-height:90vh;overflow-y:auto}
+  .modal h2{font-size:18px;margin-bottom:16px}
+  .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+  .form-row.full{grid-template-columns:1fr}
+  .form-row label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  .form-row input,.form-row select{width:100%}
+  .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+  .empty{text-align:center;color:var(--muted);padding:30px;font-size:13px}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px}
+  .error{background:rgba(239,68,68,.1);color:#fca5a5;padding:12px;border-radius:8px;
+    margin-bottom:16px;font-size:13px;display:none}
+  .loader{text-align:center;padding:60px;color:var(--muted);font-size:14px}
+  .tooltip-help{position:relative;cursor:help;color:var(--muted);font-size:11px;
+    border-bottom:1px dotted var(--muted)}
+  .value-input{display:flex;align-items:center;gap:10px}
+  .value-input input[type=range]{flex:1;accent-color:var(--purple)}
+  .value-input .num{font-size:22px;font-weight:700;color:var(--purple);min-width:36px;text-align:center}
+  .value-display{display:flex;align-items:center;gap:8px}
+  .value-bar{height:6px;background:var(--border);border-radius:3px;flex:1;overflow:hidden;min-width:40px}
+  .value-fill{height:100%;border-radius:3px}
+  .value-num{font-weight:700;font-size:12px;min-width:24px;text-align:right}
+  .empty-state{text-align:center;padding:60px 20px;color:var(--muted)}
+  .empty-state h2{font-size:20px;color:var(--text);margin-bottom:10px}
+  .empty-state p{font-size:14px;margin-bottom:18px}
+  .dept-hint{font-size:11px;color:var(--muted);margin-top:4px}
+  .dept-hint.new{color:var(--amber);font-weight:600}
+
+  /* ИИ-блок */
+  .ai-card{border:1px solid rgba(168,85,247,.3)}
+  .ai-card h3{color:var(--purple)}
+  .ai-tools{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .ai-tools button{background:rgba(168,85,247,.15);color:#d8b4fe;
+    border:1px solid rgba(168,85,247,.3);padding:8px 14px;font-size:13px}
+  .ai-tools button:hover{background:rgba(168,85,247,.3);filter:none}
+  .ai-ask{display:flex;gap:8px;margin-bottom:14px}
+  .ai-ask input{flex:1;background:var(--card2)}
+  .ai-ask button{background:var(--purple);color:#fff}
+  .ai-answer{background:var(--card2);border-radius:10px;padding:18px;
+    font-size:14px;line-height:1.65;min-height:100px;overflow-x:auto}
+  .ai-answer h1,.ai-answer h2,.ai-answer h3{color:#e9d5ff;margin:12px 0 6px;font-size:15px}
+  .ai-answer h1:first-child,.ai-answer h2:first-child,.ai-answer h3:first-child{margin-top:0}
+  .ai-answer ul,.ai-answer ol{margin:8px 0 8px 22px}
+  .ai-answer li{margin:4px 0}
+  .ai-answer strong{color:#f0abfc}
+  .ai-answer code{background:rgba(168,85,247,.15);padding:2px 6px;border-radius:4px;
+    font-family:monospace;font-size:12px;color:#e9d5ff}
+  .ai-thinking{color:var(--purple);font-style:italic;display:flex;align-items:center;gap:10px}
+  .ai-thinking::before{content:'';width:14px;height:14px;border:2px solid rgba(168,85,247,.3);
+    border-top-color:var(--purple);border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<h1>📊 Дашборд текучести и увольнений <span style="font-size:14px;color:var(--purple)">+ 🤖 GigaChat</span></h1>
+<div class="sub">Supabase · GigaChat (Сбер) · <span id="connStatus" class="status wait">● подключение…</span></div>
+
+<div class="error" id="errorBox"></div>
+
+<div class="toolbar">
+  <select id="deptFilter"></select>
+  <select id="periodFilter">
+    <option value="12">Последние 12 месяцев</option>
+    <option value="6">Последние 6 месяцев</option>
+    <option value="3">Последние 3 месяца</option>
+    <option value="999">Всё время</option>
+  </select>
+  <select id="typeFilter">
+    <option value="ALL">Все типы увольнений</option>
+    <option value="По инициативе сотрудника">По инициативе сотрудника</option>
+    <option value="По инициативе работодателя">По инициативе работодателя</option>
+    <option value="По соглашению сторон">По соглашению сторон</option>
+    <option value="Сокращение штата">Сокращение штата</option>
+    <option value="Окончание срока договора">Окончание срока договора</option>
+    <option value="Другое">Другое</option>
+  </select>
+  <button onclick="openModal()">➕ Добавить увольнение</button>
+  <button class="ghost" onclick="exportCSV()">📄 CSV</button>
+  <button class="ghost" onclick="reloadAll()">🔄 Обновить</button>
+  <button class="danger small" onclick="clearAll()">🗑 Удалить всё</button>
+</div>
+
+<div id="loader" class="loader">Загрузка данных из Supabase…</div>
+
+<div id="content" style="display:none">
+  <div id="emptyState" class="empty-state" style="display:none">
+    <h2>📭 Записей пока нет</h2>
+    <p>Добавь первое увольнение — отдел можно вписать прямо в форме</p>
+    <button onclick="openModal()">➕ Добавить первое увольнение</button>
+  </div>
+
+  <div id="dashboard" style="display:none">
+
+    <!-- 🤖 ИИ-БЛОК -->
+    <div class="grid">
+      <div class="card full ai-card">
+        <h3>🤖 ИИ-анализ текучести · GigaChat (Сбер)</h3>
+
+        <div class="ai-tools">
+          <button onclick="aiAnalyze('summary')">📊 Общий анализ</button>
+          <button onclick="aiAnalyze('reasons')">🎯 Анализ причин увольнений</button>
+          <button onclick="aiAnalyze('patterns')">🔍 Скрытые паттерны</button>
+          <button onclick="aiAnalyze('recommend')">💡 Рекомендации</button>
+          <button onclick="aiAnalyze('forecast')">📈 Прогноз</button>
+          <button onclick="aiAnalyze('risks')">⚠️ Зоны риска</button>
+        </div>
+
+        <div class="ai-ask">
+          <input id="aiQuestion"
+            placeholder="Свой вопрос: например, «Какие причины увольнений преобладают в разработке?»"
+            onkeydown="if(event.key==='Enter') aiAsk()">
+          <button onclick="aiAsk()">Спросить ИИ</button>
+        </div>
+
+        <div class="ai-answer" id="aiAnswer">
+          <span style="color:var(--muted)">🤖 Нажми кнопку выше — GigaChat проанализирует твои данные.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="grid">
+      <div class="card"><h3>Причины увольнений</h3><canvas id="reasonsChart"></canvas></div>
+      <div class="card"><h3>Динамика текучести по месяцам, %</h3><canvas id="trendChart"></canvas></div>
+    </div>
+
+    <div class="grid">
+      <div class="card"><h3>Текучесть по отделам, %</h3><canvas id="deptChart"></canvas></div>
+      <div class="card"><h3>Типы увольнений</h3><canvas id="typeChart"></canvas></div>
+    </div>
+
+    <div class="grid">
+      <div class="card"><h3>Распределение по ценности (1–10)</h3><canvas id="valueChart"></canvas></div>
+      <div class="card"><h3>Средняя ценность уволенных по отделам</h3><canvas id="valueDeptChart"></canvas></div>
+    </div>
+
+    <div class="grid">
+      <div class="card full">
+        <h3>Анализ причин</h3>
+        <table id="reasonsTable">
+          <thead><tr>
+            <th>Причина</th><th>Кол-во</th><th>Доля</th><th>Ср. стаж</th>
+            <th>Ср. ценность</th><th>Тип увольнения</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card full">
+        <h3>Анализ по типам увольнений</h3>
+        <table id="typesTable">
+          <thead><tr>
+            <th>Тип увольнения</th><th>Кол-во</th><th>Доля</th><th>Ср. стаж</th>
+            <th>Ср. ценность</th><th>Высокая ценность (8–10)</th><th>Доля</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card full">
+        <h3>Все записи</h3>
+        <table id="termTable">
+          <thead><tr>
+            <th>Сотрудник</th><th>Отдел</th><th>Должность</th><th>Дата</th>
+            <th>Стаж</th><th>Причина</th><th>Тип увольнения</th><th>Ценность</th><th></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- МОДАЛКА УВОЛЬНЕНИЯ -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <h2 id="modalTitle">Добавить увольнение</h2>
+    <input type="hidden" id="editId">
+    <div class="form-row">
+      <div><label>ФИО *</label><input id="fName" placeholder="Фамилия И.О."></div>
+      <div>
+        <label>Отдел *</label>
+        <input id="fDept" list="deptList" placeholder="Например: Разработка сайтов"
+          oninput="onDeptInput()" autocomplete="off">
+        <datalist id="deptList"></datalist>
+        <div class="dept-hint" id="deptHint">Выбери из списка или введи новое</div>
+      </div>
+    </div>
+    <div class="form-row">
+      <div><label>Должность</label><input id="fPosition"></div>
+      <div><label>Дата увольнения *</label><input type="date" id="fDate"></div>
+    </div>
+    <div class="form-row">
+      <div><label>Стаж, месяцев *</label><input type="number" id="fTenure" min="0" value="12"></div>
+      <div><label>Причина *</label><select id="fReason"></select></div>
+    </div>
+    <div class="form-row full" id="empRow" style="display:none">
+      <div>
+        <label>Численность отдела *</label>
+        <input type="number" id="fEmployees" min="1" value="10">
+        <div class="hint">Заполняется один раз при создании нового отдела</div>
+      </div>
+    </div>
+    <div class="form-row full">
+      <div>
+        <label>Тип увольнения *</label>
+        <select id="fTerminationType"></select>
+      </div>
+    </div>
+    <div class="form-row full">
+      <div>
+        <label>Ценность сотрудника (1–10) *</label>
+        <div class="value-input">
+          <input type="range" id="fValue" min="1" max="10" value="5" step="1"
+            oninput="document.getElementById('fValueNum').textContent = this.value">
+          <span class="num" id="fValueNum">5</span>
+        </div>
+        <div class="hint">1 — легко заменим · 5 — средний · 10 — ключевой</div>
+      </div>
+    </div>
+    <div class="hint">* — обязательные поля</div>
+    <div class="modal-actions">
+      <button class="ghost" onclick="closeModal()">Отмена</button>
+      <button onclick="saveRecord()" id="saveBtn">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   НАСТРОЙКИ
+   ============================================================ */
+const SUPABASE_URL      = 'https://rbkklhaqwpatawuidugc.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_beuLpldshhQOHvJArG-S-Q_jkR2DzHX';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const AI_ENDPOINT = SUPABASE_URL + '/functions/v1/gigachat-analyze';
+const AI_KEY      = SUPABASE_ANON_KEY;
+
+/* ============================================================
+   СПРАВОЧНИКИ
+   ============================================================ */
+const REASONS = [
+  {name:'По собственному желанию',      type:'Добровольное',  suggestedType:'По инициативе сотрудника'},
+  {name:'Низкая зарплата',              type:'Добровольное',  suggestedType:'По инициативе сотрудника'},
+  {name:'Отсутствие роста / карьеры',   type:'Добровольное',  suggestedType:'По инициативе сотрудника'},
+  {name:'Переработки / выгорание',      type:'Добровольное',  suggestedType:'По инициативе сотрудника'},
+  {name:'Конфликт с руководством',      type:'Добровольное',  suggestedType:'По инициативе сотрудника'},
+  {name:'Переезд / смена города',       type:'Личное',        suggestedType:'По инициативе сотрудника'},
+  {name:'Смена сферы деятельности',     type:'Личное',        suggestedType:'По инициативе сотрудника'},
+  {name:'Выход на пенсию',              type:'Личное',        suggestedType:'По инициативе сотрудника'},
+  {name:'Низкая эффективность',         type:'Работодатель',  suggestedType:'По инициативе работодателя'},
+  {name:'Нарушение дисциплины',         type:'Работодатель',  suggestedType:'По инициативе работодателя'},
+  {name:'Не прошёл испытательный срок', type:'Работодатель',  suggestedType:'По инициативе работодателя'},
+  {name:'Сокращение штата',             type:'Сокращение',    suggestedType:'Сокращение штата'},
+  {name:'По соглашению сторон',         type:'Соглашение',    suggestedType:'По соглашению сторон'},
+  {name:'Окончание срока договора',     type:'Срок',          suggestedType:'Окончание срока договора'},
+  {name:'Другое',                       type:'Прочее',        suggestedType:'Другое'}
+];
+
+const TERMINATION_TYPES = [
+  {code:'По инициативе сотрудника',   color:'#ef4444', badge:'b-red'},
+  {code:'По инициативе работодателя', color:'#fb923c', badge:'b-orange'},
+  {code:'По соглашению сторон',       color:'#38bdf8', badge:'b-blue'},
+  {code:'Сокращение штата',           color:'#a855f7', badge:'b-purple'},
+  {code:'Окончание срока договора',   color:'#14b8a6', badge:'b-teal'},
+  {code:'Другое',                     color:'#94a3b8', badge:'b-gray'}
+];
+
+function typeColor(t){ return TERMINATION_TYPES.find(x=>x.code===t)?.color || '#94a3b8'; }
+function typeBadge(t){ return TERMINATION_TYPES.find(x=>x.code===t)?.badge || 'b-gray'; }
+function valueColor(v){
+  if(v >= 8) return '#ef4444';
+  if(v >= 6) return '#f59e0b';
+  if(v >= 4) return '#38bdf8';
+  return '#22c55e';
+}
+
+let RECORDS = [];
+let DEPARTMENTS = [];
+let HEADCOUNT = {};
+
+/* ============================================================
+   Утилиты
+   ============================================================ */
+function showError(msg){
+  const box = document.getElementById('errorBox');
+  box.textContent = '⚠️ ' + msg;
+  box.style.display = 'block';
+  console.error(msg);
+}
+function setStatus(state){
+  const el = document.getElementById('connStatus');
+  el.className = 'status ' + state;
+  el.textContent = state==='on' ? '● подключено' : (state==='off' ? '● ошибка' : '● подключение…');
+}
+
+/* UI init */
+const deptFilter = document.getElementById('deptFilter');
+const fReason = document.getElementById('fReason');
+fReason.innerHTML = REASONS.map(r=>`<option value="${r.name}">${r.name}</option>`).join('');
+
+const fTerminationType = document.getElementById('fTerminationType');
+fTerminationType.innerHTML = TERMINATION_TYPES.map(t=>
+  `<option value="${t.code}">${t.code}</option>`).join('');
+
+fReason.addEventListener('change', ()=>{
+  const r = REASONS.find(x=>x.name===fReason.value);
+  if(r) fTerminationType.value = r.suggestedType;
+});
+fReason.dispatchEvent(new Event('change'));
+
+/* Автодополнение отдела */
+const fDept = document.getElementById('fDept');
+const deptList = document.getElementById('deptList');
+const deptHint = document.getElementById('deptHint');
+const empRow = document.getElementById('empRow');
+
+function refreshDeptDatalist(){
+  deptList.innerHTML = DEPARTMENTS.map(d=>
+    `<option value="${d.name}">${d.employees} чел.</option>`).join('');
+}
+function onDeptInput(){
+  const val = fDept.value.trim();
+  const exists = DEPARTMENTS.find(d => d.name.toLowerCase() === val.toLowerCase());
+  if(!val){
+    empRow.style.display = 'none';
+    deptHint.textContent = 'Выбери из списка или введи новое';
+    deptHint.className = 'dept-hint';
+    return;
+  }
+  if(exists){
+    empRow.style.display = 'none';
+    deptHint.textContent = `✓ Существующий отдел · ${exists.employees} чел.`;
+    deptHint.className = 'dept-hint';
+  } else {
+    empRow.style.display = 'block';
+    deptHint.textContent = `⚠ Новый отдел — укажи численность, он сохранится автоматически`;
+    deptHint.className = 'dept-hint new';
+  }
+}
+function refreshDeptFilter(){
+  const current = deptFilter.value;
+  deptFilter.innerHTML = '<option value="ALL">Все отделы</option>' +
+    DEPARTMENTS.map(d=>`<option value="${d.name}">${d.name}</option>`).join('');
+  if([...deptFilter.options].some(o=>o.value===current)){
+    deptFilter.value = current;
+  }
+}
+
+/* Модальное окно */
+function openModal(rec=null){
+  document.getElementById('modalTitle').textContent = rec ? 'Редактировать запись' : 'Добавить увольнение';
+  document.getElementById('editId').value    = rec ? rec.id : '';
+  document.getElementById('fName').value     = rec ? rec.name : '';
+  fDept.value                                = rec ? rec.dept : '';
+  document.getElementById('fPosition').value = rec ? (rec.position||'') : '';
+  document.getElementById('fDate').value     = rec ? rec.date : new Date().toISOString().slice(0,10);
+  document.getElementById('fTenure').value   = rec ? rec.tenure_months : 12;
+  document.getElementById('fReason').value   = rec ? rec.reason : REASONS[0].name;
+  fTerminationType.value = rec ? rec.termination_type : REASONS[0].suggestedType;
+  const val = rec?.value_score || 5;
+  document.getElementById('fValue').value = val;
+  document.getElementById('fValueNum').textContent = val;
+  onDeptInput();
+  document.getElementById('modalBg').classList.add('open');
+}
+function closeModal(){ document.getElementById('modalBg').classList.remove('open'); }
+document.getElementById('modalBg').addEventListener('click', e=>{
+  if(e.target.id==='modalBg') closeModal();
+});
+
+/* ============================================================
+   Supabase CRUD
+   ============================================================ */
+async function loadAll(){
+  setStatus('wait');
+  try{
+    const [deptRes, termRes] = await Promise.all([
+      sb.from('departments').select('*').order('name'),
+      sb.from('terminations').select('*').order('date', {ascending:false})
+    ]);
+    if(deptRes.error){ showError('departments: ' + deptRes.error.message); setStatus('off'); return false; }
+    if(termRes.error){ showError('terminations: ' + termRes.error.message); setStatus('off'); return false; }
+
+    DEPARTMENTS = deptRes.data || [];
+    HEADCOUNT = {};
+    DEPARTMENTS.forEach(d=> HEADCOUNT[d.name] = d.employees || 1);
+
+    RECORDS = (termRes.data || []).map(r=>({
+      ...r,
+      termination_type: r.termination_type || 'По инициативе сотрудника',
+      value_score: r.value_score ?? 5
+    }));
+
+    refreshDeptDatalist();
+    refreshDeptFilter();
+    setStatus('on');
+    return true;
+  }catch(e){
+    showError('Сеть: ' + e.message);
+    setStatus('off');
+    return false;
+  }
+}
+
+async function ensureDepartment(name, employees){
+  const trimmed = name.trim();
+  const exists = DEPARTMENTS.find(d => d.name.toLowerCase() === trimmed.toLowerCase());
+  if(exists) return exists.name;
+  const { data, error } = await sb.from('departments').insert({
+    name: trimmed, employees: employees
+  }).select().single();
+  if(error){
+    const { data: existing } = await sb.from('departments').select('*').eq('name', trimmed).single();
+    if(existing) return existing.name;
+    throw new Error('Не удалось создать отдел: ' + error.message);
+  }
+  return data.name;
+}
+
+async function saveRecord(){
+  const id              = document.getElementById('editId').value;
+  const name            = document.getElementById('fName').value.trim();
+  const deptInput       = fDept.value.trim();
+  const position        = document.getElementById('fPosition').value.trim();
+  const date            = document.getElementById('fDate').value;
+  const tenureMonths    = parseInt(document.getElementById('fTenure').value) || 0;
+  const reason          = document.getElementById('fReason').value;
+  const terminationType = fTerminationType.value;
+  const valueScore      = parseInt(document.getElementById('fValue').value) || 5;
+  const employeesNew    = parseInt(document.getElementById('fEmployees').value) || 0;
+  const rMeta           = REASONS.find(r=>r.name===reason);
+
+  if(!name){ alert('Введите ФИО'); return; }
+  if(!deptInput){ alert('Введите отдел'); return; }
+  if(!date){ alert('Укажите дату'); return; }
+
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true; btn.textContent = 'Сохранение…';
+
+  try{
+    const deptName = await ensureDepartment(deptInput, employeesNew || 1);
+    const payload = {
+      name, dept: deptName, position, date,
+      tenure_months: tenureMonths,
+      reason,
+      type: rMeta ? rMeta.type : 'Прочее',
+      termination_type: terminationType,
+      value_score: valueScore
+    };
+    let res = id
+      ? await sb.from('terminations').update(payload).eq('id', id)
+      : await sb.from('terminations').insert(payload);
+    if(res.error) throw new Error(res.error.message);
+    closeModal();
+    await reloadAll();
+  }catch(e){
+    showError(e.message);
+  }finally{
+    btn.disabled = false; btn.textContent = 'Сохранить';
+  }
+}
+
+async function deleteRecord(id){
+  if(!confirm('Удалить запись?')) return;
+  const { error } = await sb.from('terminations').delete().eq('id', id);
+  if(error){ showError('Ошибка удаления: ' + error.message); return; }
+  await reloadAll();
+}
+
+async function clearAll(){
+  if(!confirm('Удалить ВСЕ записи об увольнениях?\n\nОтделы останутся.')) return;
+  const { error } = await sb.from('terminations')
+    .delete().neq('id', '00000000-0000-0000-0000-000000000000');
+  if(error){ showError('Ошибка: ' + error.message); return; }
+  await reloadAll();
+}
+
+function editRecord(id){
+  const rec = RECORDS.find(r=>r.id===id);
+  if(rec) openModal(rec);
+}
+
+/* ============================================================
+   Фильтрация
+   ============================================================ */
+function getFiltered(){
+  const dept = deptFilter.value;
+  const period = parseInt(document.getElementById('periodFilter').value);
+  const ttype = document.getElementById('typeFilter').value;
+  let list = RECORDS.filter(r => dept==='ALL' || r.dept===dept);
+  if(ttype !== 'ALL') list = list.filter(r => r.termination_type === ttype);
+  if(period < 999){
+    const now = new Date();
+    const cutoff = new Date(now.getFullYear(), now.getMonth()-period+1, 1);
+    list = list.filter(r => new Date(r.date) >= cutoff);
+  }
+  return list;
+}
+function getHeadcount(dept){
+  if(dept==='ALL') return Object.values(HEADCOUNT).reduce((a,b)=>a+b,0) || 1;
+  return HEADCOUNT[dept] || 1;
+}
+
+/* ============================================================
+   KPI + Графики + Таблицы (как раньше)
+   ============================================================ */
+function renderKPIs(data){
+  const dept = deptFilter.value;
+  const period = parseInt(document.getElementById('periodFilter').value);
+  const hc = getHeadcount(dept);
+  const term = data.length;
+  const years = period>=999 ? 1 : period/12;
+  const turnover = hc ? (term/hc)/years*100 : 0;
+  const avgTenure = term ? (data.reduce((s,t)=>s+(+t.tenure_months||0),0)/term).toFixed(1) : 0;
+  const avgValue  = term ? (data.reduce((s,t)=>s+(+t.value_score||0),0)/term).toFixed(1) : 0;
+  const empInit   = data.filter(t=>t.termination_type === 'По инициативе сотрудника').length;
+  const emplInit  = data.filter(t=>t.termination_type === 'По инициативе работодателя').length;
+  const reduce    = data.filter(t=>t.termination_type === 'Сокращение штата').length;
+  const highValue = data.filter(t=>(+t.value_score||0) >= 8).length;
+  const empShare  = term ? Math.round(empInit/term*100) : 0;
+  const highShare = term ? Math.round(highValue/term*100) : 0;
+
+  document.getElementById('kpis').innerHTML = `
+    <div class="kpi"><div class="label">Текучесть (годовая)</div>
+      <div class="value">${turnover.toFixed(1)}%</div>
+      <div class="delta">за выбранный период</div></div>
+    <div class="kpi red"><div class="label">Всего уволено</div>
+      <div class="value">${term}</div>
+      <div class="delta">${empInit} по инициативе сотрудника (${empShare}%)</div></div>
+    <div class="kpi orange"><div class="label">По инициативе работодателя</div>
+      <div class="value">${emplInit}</div>
+      <div class="delta">${reduce} сокращений</div></div>
+    <div class="kpi purple"><div class="label">Средняя ценность</div>
+      <div class="value">${avgValue} / 10</div>
+      <div class="delta">${highValue} с ценностью 8–10 (${highShare}%)</div></div>
+    <div class="kpi amber"><div class="label">Средний стаж</div>
+      <div class="value">${avgTenure} мес</div>
+      <div class="delta">на момент увольнения</div></div>
+  `;
+}
+
+const CHART_OPTS = {
+  responsive:true, maintainAspectRatio:false,
+  plugins:{legend:{labels:{color:'#cbd5e1',font:{size:11}}}},
+  scales:{
+    x:{ticks:{color:'#94a3b8'},grid:{color:'#334155'}},
+    y:{ticks:{color:'#94a3b8'},grid:{color:'#334155'}}
+  }
+};
+let reasonsChart, trendChart, deptChart, typeChart, valueChart, valueDeptChart;
+
+function renderReasonsChart(data){
+  const counts = {};
+  data.forEach(t=>counts[t.reason]=(counts[t.reason]||0)+1);
+  const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+  const labels = sorted.map(x=>x[0]);
+  const values = sorted.map(x=>x[1]);
+  const colors = labels.map(l=>{
+    const r = REASONS.find(x=>x.name===l);
+    return typeColor(r?.suggestedType || 'Другое');
+  });
+  if(reasonsChart) reasonsChart.destroy();
+  const el = document.getElementById('reasonsChart');
+  if(!labels.length){ el.style.display='none'; return; }
+  el.style.display='block';
+  reasonsChart = new Chart(el,{
+    type:'bar',
+    data:{labels,datasets:[{data:values,backgroundColor:colors,borderRadius:6}]},
+    options:{...CHART_OPTS,indexAxis:'y',
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw} увольнений`}}}}
+  });
+}
+function renderTrendChart(data){
+  const now = new Date();
+  const period = parseInt(document.getElementById('periodFilter').value);
+  const monthsCount = period>=999 ? 12 : period;
+  const labels = [], keys = [];
+  for(let i=monthsCount-1;i>=0;i--){
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    labels.push(['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'][d.getMonth()]);
+    keys.push(`${d.getFullYear()}-${d.getMonth()}`);
+  }
+  const counts = keys.map(k=>data.filter(t=>{
+    const d = new Date(t.date);
+    return `${d.getFullYear()}-${d.getMonth()}`===k;
+  }).length);
+  const hc = getHeadcount(deptFilter.value);
+  const rates = counts.map(c=>+(c/hc*100).toFixed(2));
+  if(trendChart) trendChart.destroy();
+  const el = document.getElementById('trendChart');
+  if(!data.length){ el.style.display='none'; return; }
+  el.style.display='block';
+  trendChart = new Chart(el,{
+    type:'line',
+    data:{labels,datasets:[
+      {label:'Текучесть, %',data:rates,borderColor:'#38bdf8',backgroundColor:'rgba(56,189,248,.15)',
+        fill:true,tension:.35,pointRadius:3,yAxisID:'y'},
+      {label:'Увольнений, шт',data:counts,borderColor:'#ef4444',backgroundColor:'rgba(239,68,68,.1)',
+        tension:.35,pointRadius:3,yAxisID:'y1',borderDash:[5,4]}
+    ]},
+    options:{...CHART_OPTS,
+      scales:{
+        x:{ticks:{color:'#94a3b8'},grid:{color:'#334155'}},
+        y:{position:'left',ticks:{color:'#38bdf8'},grid:{color:'#334155'}},
+        y1:{position:'right',ticks:{color:'#ef4444'},grid:{drawOnChartArea:false}}
+      }}
+  });
+}
+function renderDeptChart(){
+  const period = parseInt(document.getElementById('periodFilter').value);
+  const now = new Date();
+  const cutoff = period>=999 ? new Date(0) : new Date(now.getFullYear(), now.getMonth()-period+1, 1);
+  const labels = DEPARTMENTS.map(d=>d.name);
+  const rates = DEPARTMENTS.map(d=>{
+    const cnt = RECORDS.filter(t=>t.dept===d.name && new Date(t.date)>=cutoff).length;
+    return +((cnt / (HEADCOUNT[d.name]||1)) * 100).toFixed(1);
+  });
+  const max = Math.max(...rates,0);
+  const colors = rates.map(r=> r===max && max>0 ? '#ef4444' : '#38bdf8');
+  if(deptChart) deptChart.destroy();
+  const el = document.getElementById('deptChart');
+  if(!labels.length){ el.style.display='none'; return; }
+  el.style.display='block';
+  deptChart = new Chart(el,{
+    type:'bar',
+    data:{labels,datasets:[{data:rates,backgroundColor:colors,borderRadius:6}]},
+    options:{...CHART_OPTS,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw}%`}}}}
+  });
+}
+function renderTypeChart(data){
+  const counts = TERMINATION_TYPES.map(t=>data.filter(x=>x.termination_type===t.code).length);
+  const labels = TERMINATION_TYPES.map(t=>t.code);
+  const colors = TERMINATION_TYPES.map(t=>t.color);
+  if(typeChart) typeChart.destroy();
+  const el = document.getElementById('typeChart');
+  if(!data.length){ el.style.display='none'; return; }
+  el.style.display='block';
+  typeChart = new Chart(el,{
+    type:'doughnut',
+    data:{labels,datasets:[{data:counts,backgroundColor:colors,borderWidth:0}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{color:'#cbd5e1',font:{size:11},padding:12}}}}
+  });
+}
+function renderValueChart(data){
+  const counts = Array.from({length:10}, (_,i)=>data.filter(t=>+t.value_score === i+1).length);
+  const colors = Array.from({length:10}, (_,i)=>valueColor(i+1));
+  if(valueChart) valueChart.destroy();
+  const el = document.getElementById('valueChart');
+  if(!data.length){ el.style.display='none'; return; }
+  el.style.display='block';
+  valueChart = new Chart(el,{
+    type:'bar',
+    data:{labels:['1','2','3','4','5','6','7','8','9','10'],
+      datasets:[{data:counts,backgroundColor:colors,borderRadius:6}]},
+    options:{...CHART_OPTS,
+      plugins:{legend:{display:false},tooltip:{callbacks:{
+        label:c=>`${c.raw} сотрудников с ценностью ${c.label}`
+      }}}}
+  });
+}
+function renderValueDeptChart(){
+  const byDept = {};
+  DEPARTMENTS.forEach(d=>{
+    const list = RECORDS.filter(t=>t.dept===d.name && t.value_score);
+    byDept[d.name] = list.length
+      ? list.reduce((s,t)=>s+ +t.value_score, 0)/list.length
+      : 0;
+  });
+  const labels = DEPARTMENTS.map(d=>d.name);
+  const values = labels.map(c=>+byDept[c].toFixed(1));
+  const colors = values.map(v=>valueColor(v));
+  if(valueDeptChart) valueDeptChart.destroy();
+  const el = document.getElementById('valueDeptChart');
+  if(!labels.length){ el.style.display='none'; return; }
+  el.style.display='block';
+  valueDeptChart = new Chart(el,{
+    type:'bar',
+    data:{labels,datasets:[{data:values,backgroundColor:colors,borderRadius:6}]},
+    options:{...CHART_OPTS,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`Средняя ценность: ${c.raw}`}}},
+      scales:{...CHART_OPTS.scales,
+        y:{...CHART_OPTS.scales.y, min:0, max:10,
+          title:{display:true,text:'Ценность (1–10)',color:'#94a3b8'}}}}
+  });
+}
+
+function renderReasonsTable(data){
+  const total = data.length || 1;
+  const grouped = {};
+  data.forEach(t=>{
+    if(!grouped[t.reason]) grouped[t.reason] = {count:0, tenure:0, value:0, types:{}};
+    grouped[t.reason].count++;
+    grouped[t.reason].tenure += (+t.tenure_months||0);
+    grouped[t.reason].value  += (+t.value_score||0);
+    grouped[t.reason].types[t.termination_type] =
+      (grouped[t.reason].types[t.termination_type]||0)+1;
+  });
+  const rows = Object.entries(grouped)
+    .sort((a,b)=>b[1].count-a[1].count)
+    .map(([name,g])=>{
+      const share = (g.count/total*100).toFixed(1);
+      const avgT = (g.tenure/g.count).toFixed(1);
+      const avgV = (g.value/g.count).toFixed(1);
+      const mainType = Object.entries(g.types).sort((a,b)=>b[1]-a[1])[0][0];
+      const cls = typeBadge(mainType);
+      return `<tr>
+        <td>${name}</td><td><b>${g.count}</b></td><td>${share}%</td><td>${avgT} мес</td>
+        <td><div class="value-display"><div class="value-bar">
+          <div class="value-fill" style="width:${avgV*10}%;background:${valueColor(+avgV)}"></div>
+        </div><span class="value-num" style="color:${valueColor(+avgV)}">${avgV}</span></div></td>
+        <td><span class="badge ${cls}">${mainType}</span></td>
+      </tr>`;
+    }).join('');
+  document.querySelector('#reasonsTable tbody').innerHTML = rows ||
+    '<tr><td colspan="6" class="empty">Нет данных</td></tr>';
+}
+function renderTypesTable(data){
+  const total = data.length || 1;
+  const rows = TERMINATION_TYPES.map(tt=>{
+    const list = data.filter(t=>t.termination_type === tt.code);
+    if(!list.length) return '';
+    const count = list.length;
+    const share = (count/total*100).toFixed(1);
+    const avgT = (list.reduce((s,t)=>s+(+t.tenure_months||0),0)/count).toFixed(1);
+    const avgV = (list.reduce((s,t)=>s+(+t.value_score||0),0)/count).toFixed(1);
+    const highCount = list.filter(t=>+t.value_score >= 8).length;
+    const highShare = ((highCount/count)*100).toFixed(0);
+    return `<tr>
+      <td><span class="badge ${tt.badge}">${tt.code}</span></td>
+      <td><b>${count}</b></td><td>${share}%</td><td>${avgT} мес</td>
+      <td><div class="value-display"><div class="value-bar">
+        <div class="value-fill" style="width:${avgV*10}%;background:${valueColor(+avgV)}"></div>
+      </div><span class="value-num" style="color:${valueColor(+avgV)}">${avgV}</span></div></td>
+      <td>${highCount}</td><td>${highShare}%</td>
+    </tr>`;
+  }).join('');
+  document.querySelector('#typesTable tbody').innerHTML = rows ||
+    '<tr><td colspan="7" class="empty">Нет данных</td></tr>';
+}
+function renderTermTable(data){
+  const rows = data.map(t=>{
+    const cls = typeBadge(t.termination_type);
+    const v = +t.value_score || 5;
+    return `<tr>
+      <td>${t.name}</td><td>${t.dept}</td><td>${t.position||'—'}</td>
+      <td>${new Date(t.date).toLocaleDateString('ru-RU')}</td>
+      <td>${t.tenure_months} мес</td><td>${t.reason}</td>
+      <td><span class="badge ${cls}">${t.termination_type}</span></td>
+      <td><div class="value-display"><div class="value-bar">
+        <div class="value-fill" style="width:${v*10}%;background:${valueColor(v)}"></div>
+      </div><span class="value-num" style="color:${valueColor(v)}">${v}</span></div></td>
+      <td>
+        <button class="ghost small" onclick='editRecord("${t.id}")'>✏️</button>
+        <button class="danger small" onclick='deleteRecord("${t.id}")'>✕</button>
+      </td>
+    </tr>`;
+  }).join('');
+  document.querySelector('#termTable tbody').innerHTML = rows ||
+    '<tr><td colspan="9" class="empty">Записей нет</td></tr>';
+}
+
+/* ============================================================
+   CSV
+   ============================================================ */
+function exportCSV(){
+  const head = ['ФИО','Отдел','Должность','Дата','Стаж_мес','Причина','Тип_увольнения','Ценность'];
+  const rows = RECORDS.map(r=>[
+    r.name, r.dept, r.position||'', r.date,
+    r.tenure_months, r.reason, r.termination_type, r.value_score
+  ].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','));
+  const csv = '\uFEFF' + [head.join(','), ...rows].join('\n');
+  const blob = new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `turnover_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+/* ============================================================
+   🤖 ИИ-АНАЛИЗ через GigaChat (Edge Function)
+   ============================================================ */
+function buildContext(){
+  const period = parseInt(document.getElementById('periodFilter').value);
+  const dept = deptFilter.value;
+  const data = getFiltered();
+
+  const byDept = {};
+  data.forEach(t=>{
+    if(!byDept[t.dept]) byDept[t.dept] = {count:0, reasons:{}, tenures:[], values:[], types:{}};
+    byDept[t.dept].count++;
+    byDept[t.dept].reasons[t.reason] = (byDept[t.dept].reasons[t.reason]||0) + 1;
+    byDept[t.dept].tenures.push(+t.tenure_months || 0);
+    byDept[t.dept].values.push(+t.value_score || 0);
+    byDept[t.dept].types[t.termination_type] = (byDept[t.dept].types[t.termination_type]||0)+1;
+  });
+
+  const byReason = {};
+  data.forEach(t => byReason[t.reason] = (byReason[t.reason]||0) + 1);
+
+  const byType = {};
+  data.forEach(t => byType[t.termination_type] = (byType[t.termination_type]||0) + 1);
+
+  return {
+    период: period >= 999 ? 'всё время' : `последние ${period} мес.`,
+    отдел: dept === 'ALL' ? 'все отделы' : dept,
+    всего_увольнений: data.length,
+    по_отделам: Object.fromEntries(Object.entries(byDept).map(([k,v])=>[k, {
+      увольнений: v.count,
+      среднесписочная: HEADCOUNT[k] || 0,
+      текучесть_pct: HEADCOUNT[k] ? +((v.count/HEADCOUNT[k])*100).toFixed(1) : 0,
+      причины: v.reasons,
+      типы_увольнений: v.types,
+      средний_стаж_мес: v.tenures.length ? +(v.tenures.reduce((a,b)=>a+b,0)/v.tenures.length).toFixed(1) : 0,
+      средняя_ценность: v.values.length ? +(v.values.reduce((a,b)=>a+b,0)/v.values.length).toFixed(1) : 0,
+      высокой_ценности_8_10: v.values.filter(x=>x>=8).length
+    }])),
+    причины_всего: byReason,
+    типы_всего: byType
+  };
+}
+
+async function callAI(mode, question){
+  const ctx = buildContext();
+  const res = await fetch(AI_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + AI_KEY
+    },
+    body: JSON.stringify({ data: ctx, mode, question })
+  });
+  if(!res.ok) throw new Error(await res.text());
+  const { answer, error } = await res.json();
+  if(error) throw new Error(error);
+  return answer;
+}
+
+async function aiAnalyze(mode){
+  const box = document.getElementById('aiAnswer');
+  box.innerHTML = '<div class="ai-thinking">GigaChat анализирует данные…</div>';
+  try{
+    const answer = await callAI(mode, null);
+    box.innerHTML = formatMarkdown(answer);
+  }catch(e){
+    box.innerHTML = '<div style="color:#fca5a5">⚠️ Ошибка: ' + e.message + '</div>';
+    console.error(e);
+  }
+}
+
+async function aiAsk(){
+  const q = document.getElementById('aiQuestion').value.trim();
+  if(!q){ alert('Введите вопрос'); return; }
+  const box = document.getElementById('aiAnswer');
+  box.innerHTML = '<div class="ai-thinking">GigaChat думает…</div>';
+  try{
+    const answer = await callAI(null, q);
+    box.innerHTML = formatMarkdown(answer);
+  }catch(e){
+    box.innerHTML = '<div style="color:#fca5a5">⚠️ Ошибка: ' + e.message + '</div>';
+  }
+}
+
+function formatMarkdown(text){
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm,  '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm,   '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/^\s*[-*] (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*?<\/li>\s*)+/gs, m => '<ul>'+m+'</ul>');
+  html = html.split('\n\n').map(p => p.match(/^<(ul|h\d)/) ? p : `<p>${p}</p>`).join('\n');
+  return html;
+}
+
+/* ============================================================
+   Обновление
+   ============================================================ */
+function refreshUI(){
+  const empty = document.getElementById('emptyState');
+  const dash  = document.getElementById('dashboard');
+  if(!RECORDS.length){
+    empty.style.display = 'block';
+    dash.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  dash.style.display = 'block';
+
+  const data = getFiltered();
+  renderKPIs(data);
+  renderReasonsChart(data);
+  renderTrendChart(data);
+  renderDeptChart();
+  renderTypeChart(data);
+  renderValueChart(data);
+  renderValueDeptChart();
+  renderReasonsTable(data);
+  renderTypesTable(data);
+  renderTermTable(data);
+}
+
+async function reloadAll(){
+  const ok = await loadAll();
+  document.getElementById('loader').style.display = 'none';
+  document.getElementById('content').style.display = ok ? 'block' : 'none';
+  if(ok) refreshUI();
+}
+
+deptFilter.addEventListener('change', refreshUI);
+document.getElementById('periodFilter').addEventListener('change', refreshUI);
+document.getElementById('typeFilter').addEventListener('change', refreshUI);
+
+reloadAll();
+</script>
+</body>
+</html>
